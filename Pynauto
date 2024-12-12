@@ -1,0 +1,131 @@
+import pynautobot
+
+# Configuration Variables
+NAUTOBOT_URL = 'https://nautobot.infra.solidity.gr/'
+API_TOKEN = '91580e3eb1e62d512a51e91900e4c06725722639'
+
+# Initialize Nautobot API
+nautobot = pynautobot.api(NAUTOBOT_URL, API_TOKEN)
+
+def get_status_uuid(status_name):
+    try:
+        status_name_lower = status_name.lower()
+        available_statuses = nautobot.extras.statuses.all()
+        matching_status = next((status for status in available_statuses if status.name.lower() == status_name_lower), None)
+        
+        if matching_status:
+            return matching_status.id
+        else:
+            print(f"❌ Status '{status_name}' not found in Nautobot.")
+            print("🔍 Available statuses are:", ', '.join([status.name for status in available_statuses]))
+            return None
+    except Exception as e:
+        print(f"❌ An error occurred while retrieving status UUID: {e}")
+        return None
+
+def create_nautobot_object(obj_endpoint, obj_type, field_data):
+    try:
+        # Convert `vid` to an integer
+        try:
+            field_data['vid'] = int(field_data['vid'])
+      
+
+        # Resolve the status field to an ID if provided
+        if 'status' in field_data and field_data['status']:
+            field_data['status'] = get_status_uuid(field_data['status'])
+            if not field_data['status']:
+                return
+
+        print(f"📦 Creating {obj_type} with data: {field_data}")
+        
+        # Direct call to Nautobot's create method
+        new_obj = obj_endpoint.create(field_data)
+        
+        if new_obj:
+            print(f"✅ Successfully created {obj_type} with ID: {new_obj['id']}")
+        else:
+            print(f"❌ Failed to create {obj_type} with data: {field_data}")
+    except Exception as e:
+        print(f"❌ An error occurred while creating {obj_type}: {e}")
+
+def remove_nautobot_object(obj_endpoint, lookup_field, lookup_value):
+    """Remove an object from Nautobot using lookup field and value."""
+    try:
+        filter_params = {lookup_field: lookup_value}
+        existing_obj = obj_endpoint.get(**filter_params)
+
+        if not existing_obj:
+            print(f"❌ No {obj_endpoint.name} found with {lookup_field}={lookup_value}.")
+            return
+        
+        existing_obj.delete()
+        print(f"✅ Successfully deleted {obj_endpoint.name} with {lookup_field}={lookup_value}.")
+    except Exception as e:
+        print(f"❌ An error occurred while deleting {obj_endpoint.name}: {e}")
+
+def parse_command(command):
+    """Parse a command and extract action, object type, and field data."""
+    parts = command.split()
+    if len(parts) < 2:
+        print("❌ Invalid command. Please use 'add vlan name vid status' or 'remove vlan field=value'.")
+        return None, None, None
+
+    action = parts[0].lower()
+    obj_type = parts[1].lower()
+    field_data = {}
+    
+    if action == 'add':
+        if len(parts) < 5:
+            print("❌ Invalid command. Please use 'add vlan name vid status'.")
+            return None, None, None
+
+        field_data = {
+            'name': parts[2],
+            'vid': parts[3],
+            'status': parts[4] if len(parts) > 4 else None
+        }
+    
+    elif action == 'remove':
+        try:
+            lookup_field, lookup_value = parts[2].split('=', 1)
+            field_data = {lookup_field: lookup_value}
+        except ValueError:
+            print("❌ Invalid remove command. Use 'remove vlan field=value'.")
+            return None, None, None
+    
+    return action, obj_type, field_data
+
+def main():
+    """Main loop to process commands for creating and removing objects."""
+    while True:
+        print("\n🛠️  Enter a command like 'add vlan test 3456 available' or 'remove vlan vid=3456' or type 'exit' to quit.")
+        command = input("🔹 Command: ").strip()
+        
+        if command.lower() == 'exit':
+            print("👋 Exiting... Goodbye!")
+            break
+
+        action, obj_type, field_data = parse_command(command)
+        if not action or not obj_type:
+            continue
+
+        if action == 'add':
+            if obj_type == 'vlan':
+                obj_endpoint = nautobot.ipam.vlans
+            elif obj_type == 'ip_address':
+                obj_endpoint = nautobot.ipam.ip_addresses
+            else:
+                print(f"❌ Unsupported object type: {obj_type}")
+                continue
+
+            create_nautobot_object(obj_endpoint, obj_type, field_data)
+
+        elif action == 'remove':
+            if obj_type == 'vlan':
+                obj_endpoint = nautobot.ipam.vlans
+
+            lookup_field, lookup_value = list(field_data.items())[0]
+            remove_nautobot_object(obj_endpoint, lookup_field, lookup_value)
+
+if __name__ == "__main__":
+    main()
